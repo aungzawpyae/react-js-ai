@@ -24,10 +24,11 @@ export interface KlineData {
 }
 
 export async function get24hrTickers(): Promise<TickerData[]> {
+  try {
   const res = await fetch(`${BASE_URL}/api/v3/ticker/24hr`, {
     next: { revalidate: 0 },
   });
-  if (!res.ok) throw new Error("Failed to fetch tickers");
+  if (!res.ok) return [];
   const data = await res.json();
   return data
     .filter((t: TickerData) => t.symbol.endsWith("USDT") && (t.lastPrice || t.price))
@@ -45,6 +46,9 @@ export async function get24hrTickers(): Promise<TickerData[]> {
         parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume)
     )
     .slice(0, 50);
+  } catch {
+    return [];
+  }
 }
 
 export async function getKlines(
@@ -70,9 +74,13 @@ export async function getKlines(
 }
 
 export async function getTickerPrice(symbol: string) {
-  const res = await fetch(`${BASE_URL}/api/v3/ticker/24hr?symbol=${symbol}`, {
-    next: { revalidate: 0 },
-  });
-  if (!res.ok) throw new Error("Failed to fetch ticker");
-  return res.json();
+  try {
+    const res = await fetch(`${BASE_URL}/api/v3/ticker/24hr?symbol=${symbol}`, {
+      next: { revalidate: 0 },
+    });
+    if (!res.ok) return { lastPrice: "0", priceChangePercent: "0", highPrice: "0", lowPrice: "0", volume: "0" };
+    return res.json();
+  } catch {
+    return { lastPrice: "0", priceChangePercent: "0", highPrice: "0", lowPrice: "0", volume: "0" };
+  }
 }
