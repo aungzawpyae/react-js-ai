@@ -3,10 +3,13 @@ const BASE_URL = process.env.BINANCE_BASE_URL || "https://testnet.binance.vision
 export interface TickerData {
   symbol: string;
   price: string;
+  lastPrice?: string;
   priceChangePercent: string;
   volume: string;
   high: string;
+  highPrice?: string;
   low: string;
+  lowPrice?: string;
   quoteVolume: string;
 }
 
@@ -27,7 +30,16 @@ export async function get24hrTickers(): Promise<TickerData[]> {
   if (!res.ok) throw new Error("Failed to fetch tickers");
   const data = await res.json();
   return data
-    .filter((t: TickerData) => t.symbol.endsWith("USDT"))
+    .filter((t: TickerData) => t.symbol.endsWith("USDT") && (t.lastPrice || t.price))
+    .map((t: TickerData) => ({
+      ...t,
+      price: t.lastPrice || t.price || "0",
+      high: t.highPrice || t.high || "0",
+      low: t.lowPrice || t.low || "0",
+      quoteVolume: t.quoteVolume || "0",
+      priceChangePercent: t.priceChangePercent || "0",
+      volume: t.volume || "0",
+    }))
     .sort(
       (a: TickerData, b: TickerData) =>
         parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume)
