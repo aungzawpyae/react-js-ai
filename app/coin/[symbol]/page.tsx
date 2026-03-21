@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getKlines, getTickerPrice } from "@/lib/binance";
+import { getTickerPrice } from "@/lib/binance";
 import { formatPrice, formatPercent, formatVolume, getCoinName } from "@/lib/format";
 import PriceChart from "@/components/PriceChart";
 import LivePrice from "@/components/LivePrice";
@@ -12,10 +12,7 @@ export default async function CoinPage({
 }) {
   const { symbol } = await params;
 
-  const [ticker, klines] = await Promise.all([
-    getTickerPrice(symbol),
-    getKlines(symbol, "1h", 100),
-  ]);
+  const ticker = await getTickerPrice(symbol);
 
   const coinName = getCoinName(symbol);
 
@@ -88,9 +85,9 @@ export default async function CoinPage({
 
         {/* Chart */}
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
-          <h2 className="mb-4 text-lg font-semibold text-white">Price Chart (1h)</h2>
-          <div className="h-64 sm:h-80">
-            <PriceChart klines={klines} />
+          <h2 className="mb-4 text-lg font-semibold text-white">Price Chart</h2>
+          <div className="h-[500px]">
+            <PriceChart symbol={symbol} />
           </div>
         </div>
 

@@ -1,4 +1,4 @@
-const BASE_URL = process.env.BINANCE_BASE_URL || "https://testnet.binance.vision";
+const BASE_URL = process.env.BINANCE_BASE_URL || "https://api.binance.com";
 
 export interface TickerData {
   symbol: string;
