@@ -11,10 +11,21 @@ export default function AnalysisPanel({ symbol }: { symbol: string }) {
     setLoading(true);
     setError(null);
     try {
+      // Fetch Binance data client-side (avoids Vercel IP blocking)
+      const [tickerRes, klinesRes] = await Promise.all([
+        fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`),
+        fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=100`),
+      ]);
+      const ticker = await tickerRes.json();
+      const rawKlines = await klinesRes.json();
+      const klines = rawKlines.map((k: (string | number)[]) => ({
+        open: k[1], high: k[2], low: k[3], close: k[4], volume: k[5],
+      }));
+
       const res = await fetch("/api/analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol }),
+        body: JSON.stringify({ symbol, klines, currentPrice: ticker.lastPrice }),
       });
 
       if (!res.ok) {

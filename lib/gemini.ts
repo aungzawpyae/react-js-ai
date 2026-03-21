@@ -1,16 +1,13 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_BASE_URL =
+  process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta";
 
 export async function analyzeCoin(
   symbol: string,
   klineData: { open: string; high: string; low: string; close: string; volume: string }[],
   currentPrice: string
 ): Promise<string> {
-  const model = genAI.getGenerativeModel({
-    model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
-  });
-
   const recentKlines = klineData.slice(-24);
   const priceHistory = recentKlines
     .map(
@@ -36,6 +33,22 @@ Provide a concise analysis including:
 
 Keep the analysis focused and actionable. Format with markdown.`;
 
-  const result = await model.generateContent(prompt);
-  return result.response.text();
+  const res = await fetch(
+    `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini API error: ${err}`);
+  }
+
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "No analysis generated.";
 }
