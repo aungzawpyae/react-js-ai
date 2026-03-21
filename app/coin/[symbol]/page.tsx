@@ -1,9 +1,6 @@
 import Link from "next/link";
-import { getTickerPrice } from "@/lib/binance";
-import { formatPrice, formatPercent, formatVolume, getCoinName } from "@/lib/format";
-import PriceChart from "@/components/PriceChart";
-import LivePrice from "@/components/LivePrice";
-import AnalysisPanel from "@/components/AnalysisPanel";
+import { getCoinName } from "@/lib/format";
+import CoinDetail from "@/components/CoinDetail";
 
 export default async function CoinPage({
   params,
@@ -11,9 +8,6 @@ export default async function CoinPage({
   params: Promise<{ symbol: string }>;
 }) {
   const { symbol } = await params;
-
-  const ticker = await getTickerPrice(symbol);
-
   const coinName = getCoinName(symbol);
 
   return (
@@ -40,59 +34,8 @@ export default async function CoinPage({
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl space-y-6 px-6 py-8">
-        {/* Price Section */}
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
-          <LivePrice
-            symbol={symbol}
-            initialPrice={ticker.lastPrice}
-            initialChange={ticker.priceChangePercent}
-          />
-
-          <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div>
-              <p className="text-xs text-zinc-500">24h High</p>
-              <p className="font-mono text-sm font-medium text-white">
-                ${formatPrice(ticker.highPrice)}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500">24h Low</p>
-              <p className="font-mono text-sm font-medium text-white">
-                ${formatPrice(ticker.lowPrice)}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500">24h Volume</p>
-              <p className="font-mono text-sm font-medium text-white">
-                {formatVolume(ticker.volume)} {coinName}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500">24h Change</p>
-              <p
-                className={`font-mono text-sm font-medium ${
-                  parseFloat(ticker.priceChangePercent) >= 0
-                    ? "text-emerald-400"
-                    : "text-red-400"
-                }`}
-              >
-                {formatPercent(ticker.priceChangePercent)}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Chart */}
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
-          <h2 className="mb-4 text-lg font-semibold text-white">Price Chart</h2>
-          <div className="h-[500px]">
-            <PriceChart symbol={symbol} />
-          </div>
-        </div>
-
-        {/* AI Analysis */}
-        <AnalysisPanel symbol={symbol} />
+      <main className="mx-auto max-w-5xl px-6 py-8">
+        <CoinDetail symbol={symbol} />
       </main>
     </div>
   );

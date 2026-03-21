@@ -4,15 +4,36 @@ import { useEffect, useRef, useState } from "react";
 import CoinCard from "./CoinCard";
 import type { CoinTicker, MiniTicker } from "@/lib/types";
 
-export default function CoinList({
-  initialData,
-}: {
-  initialData: CoinTicker[];
-}) {
-  const [coins, setCoins] = useState<CoinTicker[]>(initialData);
+export default function CoinList() {
+  const [coins, setCoins] = useState<CoinTicker[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"volume" | "change" | "price">("volume");
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Fetch initial data client-side (browser → Binance directly)
+  useEffect(() => {
+    fetch("https://api.binance.com/api/v3/ticker/24hr")
+      .then((res) => res.json())
+      .then((data) => {
+        const tickers = data
+          .filter((t: Record<string, string>) => t.symbol.endsWith("USDT") && t.lastPrice)
+          .map((t: Record<string, string>) => ({
+            symbol: t.symbol,
+            price: t.lastPrice || "0",
+            high: t.highPrice || "0",
+            low: t.lowPrice || "0",
+            quoteVolume: t.quoteVolume || "0",
+            priceChangePercent: t.priceChangePercent || "0",
+            volume: t.volume || "0",
+          }))
+          .sort((a: CoinTicker, b: CoinTicker) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+          .slice(0, 50);
+        setCoins(tickers);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
 
   useEffect(() => {
     const ws = new WebSocket("wss://stream.binance.com:9443/ws/!miniTicker@arr");
@@ -116,7 +137,11 @@ export default function CoinList({
         ))}
       </div>
 
-      {filtered.length === 0 && (
+      {loading && (
+        <div className="py-20 text-center text-zinc-500">Loading market data...</div>
+      )}
+
+      {!loading && filtered.length === 0 && (
         <div className="py-20 text-center text-zinc-500">
           No coins found matching &quot;{search}&quot;
         </div>

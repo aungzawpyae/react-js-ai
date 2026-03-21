@@ -1,8 +1,6 @@
 import CoinList from "@/components/CoinList";
-import { get24hrTickers } from "@/lib/binance";
 
-export default async function Home() {
-  const tickers = await get24hrTickers();
+export default function Home() {
 
   return (
     <div className="min-h-screen bg-black">
@@ -33,7 +31,7 @@ export default async function Home() {
           </p>
         </div>
 
-        <CoinList initialData={tickers} />
+        <CoinList />
       </main>
     </div>
   );
