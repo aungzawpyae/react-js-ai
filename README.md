@@ -1,36 +1,107 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CryptoTrader
+
+Real-time cryptocurrency trading dashboard with AI-powered analysis. Built with Next.js 16, React 19, and Tailwind CSS 4.
+
+## Features
+
+- **Real-Time Market Data** — Top 50 USDT pairs streamed live via Binance WebSocket
+- **Coin Detail View** — Live price updates, 24h stats, and candlestick chart
+- **AI Analysis** — One-click Gemini AI technical analysis with trend, support/resistance, and BUY/SELL/HOLD signals
+- **Telegram Notifications** — Send alerts via Telegram Bot API
+- **Supabase Backend** — Database and auth integration
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 16 (App Router, Turbopack) |
+| UI | React 19, Tailwind CSS 4 |
+| Market Data | Binance REST + WebSocket API |
+| AI | Google Gemini 2.0 Flash |
+| Database | Supabase |
+| Notifications | Telegram Bot API |
+| Language | TypeScript |
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 20+
+- pnpm
+
+### Setup
+
+1. Clone the repository:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone git@github.com:aungzawpyae/react-js-ai.git
+cd react-js-ai
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Install dependencies:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm install
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+3. Create `.env.local` with the following variables:
 
-## Learn More
+```env
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
 
-To learn more about Next.js, take a look at the following resources:
+BINANCE_API_KEY=your_binance_api_key
+BINANCE_API_SECRET=your_binance_api_secret
+BINANCE_BASE_URL=https://testnet.binance.vision
+BINANCE_FUTURES_BASE_URL=https://testnet.binancefuture.com
+BINANCE_WS_URL=wss://stream.binance.com:9443/ws
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-2.0-flash
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+```
 
-## Deploy on Vercel
+4. Run the development server:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm dev
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+## Project Structure
+
+```
+app/
+  page.tsx                  # Home — real-time coin list
+  coin/[symbol]/page.tsx    # Coin detail — chart + AI analysis
+  api/
+    coins/route.ts          # Binance ticker data
+    analysis/route.ts       # Gemini AI analysis
+    telegram/route.ts       # Telegram notifications
+components/
+  CoinList.tsx              # Live-updating coin grid
+  CoinCard.tsx              # Individual coin card
+  LivePrice.tsx             # Real-time price with flash animation
+  PriceChart.tsx            # Canvas candlestick chart
+  AnalysisPanel.tsx         # AI analysis panel
+lib/
+  binance.ts                # Binance API client
+  gemini.ts                 # Gemini AI client
+  supabase.ts               # Supabase client
+  telegram.ts               # Telegram Bot client
+  format.ts                 # Price/volume formatters
+  types.ts                  # TypeScript interfaces
+```
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `pnpm dev` | Start dev server |
+| `pnpm build` | Production build |
+| `pnpm start` | Start production server |
+| `pnpm lint` | Run ESLint |
