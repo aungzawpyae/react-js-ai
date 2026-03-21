@@ -1,4 +1,7 @@
-const BASE_URL = process.env.BINANCE_BASE_URL || "https://api.binance.com";
+// Public market data always uses production API (no auth needed)
+const BASE_URL = "https://api.binance.com";
+// Testnet for authenticated trading operations (orders, account)
+const TRADE_BASE_URL = process.env.BINANCE_BASE_URL || "https://testnet.binance.vision";
 
 export interface TickerData {
   symbol: string;
