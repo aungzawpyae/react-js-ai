@@ -15,8 +15,8 @@ export default function AnalysisPanel({ symbol }: { symbol: string }) {
       const [tickerRes, klines1hRes, klines4hRes, klines1dRes] = await Promise.all([
         fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`),
         fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=100`),
-        fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=4h&limit=50`),
-        fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1d&limit=30`),
+        fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=4h&limit=200`),
+        fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1d&limit=250`),
       ]);
       const ticker = await tickerRes.json();
       const parseKlines = (raw: (string | number)[][]) =>
