@@ -11,21 +11,38 @@ export default function AnalysisPanel({ symbol }: { symbol: string }) {
     setLoading(true);
     setError(null);
     try {
-      // Fetch Binance data client-side (avoids Vercel IP blocking)
-      const [tickerRes, klinesRes] = await Promise.all([
+      // Fetch multi-timeframe data client-side
+      const [tickerRes, klines1hRes, klines4hRes, klines1dRes] = await Promise.all([
         fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`),
         fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=100`),
+        fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=4h&limit=50`),
+        fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1d&limit=30`),
       ]);
       const ticker = await tickerRes.json();
-      const rawKlines = await klinesRes.json();
-      const klines = rawKlines.map((k: (string | number)[]) => ({
-        open: k[1], high: k[2], low: k[3], close: k[4], volume: k[5],
-      }));
+      const parseKlines = (raw: (string | number)[][]) =>
+        raw.map((k) => ({
+          open: k[1] as string, high: k[2] as string, low: k[3] as string,
+          close: k[4] as string, volume: k[5] as string,
+        }));
+      const klines1h = parseKlines(await klines1hRes.json());
+      const klines4h = parseKlines(await klines4hRes.json());
+      const klines1d = parseKlines(await klines1dRes.json());
 
       const res = await fetch("/api/analysis", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, klines, currentPrice: ticker.lastPrice }),
+        body: JSON.stringify({
+          symbol,
+          klines1h,
+          klines4h,
+          klines1d,
+          currentPrice: ticker.lastPrice,
+          high24h: ticker.highPrice,
+          low24h: ticker.lowPrice,
+          volume24h: ticker.volume,
+          quoteVolume24h: ticker.quoteVolume,
+          priceChange24h: ticker.priceChangePercent,
+        }),
       });
 
       if (!res.ok) {
