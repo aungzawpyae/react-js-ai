@@ -33,7 +33,7 @@ export interface KlineData {
 export async function get24hrTickers(): Promise<TickerData[]> {
   try {
   const res = await fetch(`${BASE_URL}/api/v3/ticker/24hr`, {
-    next: { revalidate: 0 },
+    cache: "no-store",
   });
   if (!res.ok) return [];
   const data = await res.json();
@@ -65,9 +65,12 @@ export async function getKlines(
 ): Promise<KlineData[]> {
   const res = await fetch(
     `${BASE_URL}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`,
-    { next: { revalidate: 0 } }
+    { cache: "no-store" }
   );
-  if (!res.ok) throw new Error("Failed to fetch klines");
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Failed to fetch klines for ${symbol} (${res.status}): ${errText}`);
+  }
   const data = await res.json();
   return data.map((k: (string | number)[]) => ({
     openTime: k[0] as number,
@@ -83,7 +86,7 @@ export async function getKlines(
 export async function getTickerPrice(symbol: string) {
   try {
     const res = await fetch(`${BASE_URL}/api/v3/ticker/24hr?symbol=${symbol}`, {
-      next: { revalidate: 0 },
+      cache: "no-store",
     });
     if (!res.ok) return { lastPrice: "0", priceChangePercent: "0", highPrice: "0", lowPrice: "0", volume: "0" };
     return res.json();
