@@ -60,6 +60,64 @@ interface AgentResponse {
   timestamp: string;
 }
 
+const TRADING_COINS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+const BINANCE_API = "https://api.binance.com";
+
+// Fetch klines directly from Binance (client-side, bypasses Vercel geo-block)
+async function fetchKlinesClient(symbol: string, interval: string, limit: number) {
+  const res = await fetch(
+    `${BINANCE_API}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+  );
+  if (!res.ok) throw new Error(`Failed to fetch ${interval} klines for ${symbol}`);
+  const data = await res.json();
+  return data.map((k: (string | number)[]) => ({
+    open: k[1] as string,
+    high: k[2] as string,
+    low: k[3] as string,
+    close: k[4] as string,
+    volume: k[5] as string,
+  }));
+}
+
+async function fetchTickerClient(symbol: string) {
+  const res = await fetch(`${BINANCE_API}/api/v3/ticker/24hr?symbol=${symbol}`);
+  if (!res.ok) throw new Error(`Failed to fetch ticker for ${symbol}`);
+  return res.json();
+}
+
+// Fetch all market data for all coins client-side
+async function fetchAllMarketData() {
+  const coinsData = [];
+  const livePrices: Record<string, string> = {};
+
+  for (const symbol of TRADING_COINS) {
+    const [klines1h, klines4h, klines1d, ticker] = await Promise.all([
+      fetchKlinesClient(symbol, "1h", 100),
+      fetchKlinesClient(symbol, "4h", 200),
+      fetchKlinesClient(symbol, "1d", 250),
+      fetchTickerClient(symbol),
+    ]);
+
+    const currentPrice = ticker.lastPrice || ticker.price || "0";
+    livePrices[symbol] = currentPrice;
+
+    coinsData.push({
+      symbol,
+      klines1h,
+      klines4h,
+      klines1d,
+      currentPrice,
+      high24h: ticker.highPrice || ticker.high || "0",
+      low24h: ticker.lowPrice || ticker.low || "0",
+      volume24h: ticker.volume || "0",
+      quoteVolume24h: ticker.quoteVolume || "0",
+      priceChange24h: ticker.priceChangePercent || "0",
+    });
+  }
+
+  return { coinsData, livePrices };
+}
+
 export default function AutoTradePanel() {
   const [journal, setJournal] = useState<TradeEntry[]>([]);
   const [stats, setStats] = useState<TradeStats | null>(null);
@@ -69,6 +127,7 @@ export default function AutoTradePanel() {
   const [error, setError] = useState("");
   const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(60);
+  const [status, setStatus] = useState("");
 
   const fetchData = useCallback(async () => {
     try {
@@ -87,14 +146,26 @@ export default function AutoTradePanel() {
     setIsRunning(true);
     setError("");
     try {
-      const res = await fetch("/api/auto-trade", { method: "POST" });
+      // Step 1: Fetch market data client-side (bypasses Vercel Binance geo-block)
+      setStatus("Fetching market data from Binance...");
+      const { coinsData, livePrices } = await fetchAllMarketData();
+
+      // Step 2: Send to API for AI analysis + trading
+      setStatus("Running AI analysis & trading agent...");
+      const res = await fetch("/api/auto-trade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coinsData, livePrices }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Agent failed");
       setLastRun(data);
+      setStatus("");
       await fetchData();
       setCountdown(60);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
+      setStatus("");
     } finally {
       setIsRunning(false);
     }
@@ -222,6 +293,16 @@ export default function AutoTradePanel() {
             </button>
           </div>
         </div>
+
+        {status && (
+          <div className="mt-4 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-400 flex items-center gap-2">
+            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+              <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" className="opacity-75" />
+            </svg>
+            {status}
+          </div>
+        )}
 
         {error && (
           <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">

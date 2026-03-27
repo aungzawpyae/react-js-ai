@@ -1,8 +1,19 @@
 import { runTradingAgent, getTradingJournal, getTradeStats } from "@/lib/trading-agent";
+import { NextRequest } from "next/server";
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    const agentResult = await runTradingAgent();
+    const body = await request.json();
+    const { coinsData, livePrices } = body;
+
+    if (!coinsData || !Array.isArray(coinsData) || coinsData.length === 0) {
+      return Response.json(
+        { error: "coinsData array is required (fetched client-side from Binance)" },
+        { status: 400 }
+      );
+    }
+
+    const agentResult = await runTradingAgent(coinsData, livePrices || {});
     return Response.json(agentResult);
   } catch (error) {
     return Response.json(
