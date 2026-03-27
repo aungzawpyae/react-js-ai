@@ -39,95 +39,11 @@ interface TradeStats {
   winRate: number;
 }
 
-interface AgentResult {
-  symbol: string;
-  signal: string;
-  confidence: number;
-  action: string;
-  reason: string;
-  analysis: string;
-}
-
-interface AgentResponse {
-  results: AgentResult[];
-  monitoring: string[];
-  riskCheck: {
-    canTrade: boolean;
-    reason: string;
-    openTrades: number;
-    consecutiveLosses: number;
-  };
-  timestamp: string;
-}
-
-const TRADING_COINS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
-const BINANCE_API = "https://api.binance.com";
-
-// Fetch klines directly from Binance (client-side, bypasses Vercel geo-block)
-async function fetchKlinesClient(symbol: string, interval: string, limit: number) {
-  const res = await fetch(
-    `${BINANCE_API}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
-  );
-  if (!res.ok) throw new Error(`Failed to fetch ${interval} klines for ${symbol}`);
-  const data = await res.json();
-  return data.map((k: (string | number)[]) => ({
-    open: k[1] as string,
-    high: k[2] as string,
-    low: k[3] as string,
-    close: k[4] as string,
-    volume: k[5] as string,
-  }));
-}
-
-async function fetchTickerClient(symbol: string) {
-  const res = await fetch(`${BINANCE_API}/api/v3/ticker/24hr?symbol=${symbol}`);
-  if (!res.ok) throw new Error(`Failed to fetch ticker for ${symbol}`);
-  return res.json();
-}
-
-// Fetch all market data for all coins client-side
-async function fetchAllMarketData() {
-  const coinsData = [];
-  const livePrices: Record<string, string> = {};
-
-  for (const symbol of TRADING_COINS) {
-    const [klines1h, klines4h, klines1d, ticker] = await Promise.all([
-      fetchKlinesClient(symbol, "1h", 100),
-      fetchKlinesClient(symbol, "4h", 200),
-      fetchKlinesClient(symbol, "1d", 250),
-      fetchTickerClient(symbol),
-    ]);
-
-    const currentPrice = ticker.lastPrice || ticker.price || "0";
-    livePrices[symbol] = currentPrice;
-
-    coinsData.push({
-      symbol,
-      klines1h,
-      klines4h,
-      klines1d,
-      currentPrice,
-      high24h: ticker.highPrice || ticker.high || "0",
-      low24h: ticker.lowPrice || ticker.low || "0",
-      volume24h: ticker.volume || "0",
-      quoteVolume24h: ticker.quoteVolume || "0",
-      priceChange24h: ticker.priceChangePercent || "0",
-    });
-  }
-
-  return { coinsData, livePrices };
-}
-
 export default function AutoTradePanel() {
   const [journal, setJournal] = useState<TradeEntry[]>([]);
   const [stats, setStats] = useState<TradeStats | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
-  const [autoMode, setAutoMode] = useState(false);
-  const [lastRun, setLastRun] = useState<AgentResponse | null>(null);
-  const [error, setError] = useState("");
   const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState(60);
-  const [status, setStatus] = useState("");
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
 
   const fetchData = useCallback(async () => {
     try {
@@ -137,62 +53,18 @@ export default function AutoTradePanel() {
       ]);
       if (journalRes.ok) setJournal(await journalRes.json());
       if (statsRes.ok) setStats(await statsRes.json());
+      setLastRefresh(new Date());
     } catch {
       // silent
     }
   }, []);
 
-  const runAgent = useCallback(async () => {
-    setIsRunning(true);
-    setError("");
-    try {
-      // Step 1: Fetch market data client-side (bypasses Vercel Binance geo-block)
-      setStatus("Fetching market data from Binance...");
-      const { coinsData, livePrices } = await fetchAllMarketData();
-
-      // Step 2: Send to API for AI analysis + trading
-      setStatus("Running AI analysis & trading agent...");
-      const res = await fetch("/api/auto-trade", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ coinsData, livePrices }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Agent failed");
-      setLastRun(data);
-      setStatus("");
-      await fetchData();
-      setCountdown(60);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-      setStatus("");
-    } finally {
-      setIsRunning(false);
-    }
-  }, [fetchData]);
-
-  // Initial data fetch
+  // Fetch on mount and auto-refresh every 30s
   useEffect(() => {
     fetchData();
-  }, [fetchData]);
-
-  // Auto mode - run every 60 seconds
-  useEffect(() => {
-    if (!autoMode) return;
-    const interval = setInterval(() => {
-      runAgent();
-    }, 60000);
+    const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
-  }, [autoMode, runAgent]);
-
-  // Countdown timer
-  useEffect(() => {
-    if (!autoMode) return;
-    const timer = setInterval(() => {
-      setCountdown((c) => (c <= 1 ? 60 : c - 1));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [autoMode]);
+  }, [fetchData]);
 
   const statusColor = (status: string) => {
     switch (status) {
@@ -215,134 +87,30 @@ export default function AutoTradePanel() {
     }
   };
 
-  const signalColor = (signal: string) => {
-    if (signal === "BUY") return "text-emerald-400";
-    if (signal === "SELL") return "text-red-400";
-    return "text-zinc-400";
-  };
-
   return (
     <div className="space-y-6">
-      {/* Control Panel */}
+      {/* Status Banner */}
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-white">
-              Trading Agent Control
-            </h3>
+            <div className="flex items-center gap-3">
+              <h3 className="text-lg font-semibold text-white">
+                Auto Trading Agent
+              </h3>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-400">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+                Running (every 1 min)
+              </span>
+            </div>
             <p className="mt-1 text-sm text-zinc-400">
-              BTC, ETH, SOL | Daily TF | $100 Capital | 1R SL, 2R/3R TP
+              BTC, ETH, SOL | Daily TF | $100 Capital | 1R SL, 2R/3R TP | Cron powered
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            {/* Auto Mode Toggle */}
-            <button
-              onClick={() => {
-                setAutoMode(!autoMode);
-                if (!autoMode) {
-                  setCountdown(60);
-                  runAgent();
-                }
-              }}
-              className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-all ${
-                autoMode
-                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                  : "bg-zinc-800 text-zinc-400 border border-zinc-700 hover:border-zinc-600"
-              }`}
-            >
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  autoMode ? "bg-emerald-400 animate-pulse" : "bg-zinc-500"
-                }`}
-              />
-              {autoMode ? `Auto ON (${countdown}s)` : "Auto OFF"}
-            </button>
-
-            {/* Manual Run */}
-            <button
-              onClick={runAgent}
-              disabled={isRunning}
-              className="rounded-xl bg-gradient-to-r from-yellow-500 to-orange-500 px-5 py-2.5 text-sm font-semibold text-black transition-all hover:from-yellow-400 hover:to-orange-400 disabled:opacity-50"
-            >
-              {isRunning ? (
-                <span className="flex items-center gap-2">
-                  <svg
-                    className="h-4 w-4 animate-spin"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="3"
-                      className="opacity-25"
-                    />
-                    <path
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                      fill="currentColor"
-                      className="opacity-75"
-                    />
-                  </svg>
-                  Analyzing...
-                </span>
-              ) : (
-                "Run Agent Now"
-              )}
-            </button>
+          <div className="text-right text-xs text-zinc-500">
+            <p>Last refresh</p>
+            <p className="text-zinc-400">{lastRefresh.toLocaleTimeString()}</p>
           </div>
         </div>
-
-        {status && (
-          <div className="mt-4 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-400 flex items-center gap-2">
-            <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
-              <path d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" fill="currentColor" className="opacity-75" />
-            </svg>
-            {status}
-          </div>
-        )}
-
-        {error && (
-          <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-            {error}
-          </div>
-        )}
-
-        {/* Last Run Results */}
-        {lastRun && (
-          <div className="mt-4 space-y-3">
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
-              <span>Last run: {new Date(lastRun.timestamp).toLocaleString()}</span>
-              <span className={lastRun.riskCheck.canTrade ? "text-emerald-400" : "text-red-400"}>
-                | Risk: {lastRun.riskCheck.reason}
-              </span>
-              <span>| Open: {lastRun.riskCheck.openTrades}</span>
-              <span>| Losses streak: {lastRun.riskCheck.consecutiveLosses}</span>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-3">
-              {lastRun.results.map((r) => (
-                <div
-                  key={r.symbol}
-                  className="rounded-xl border border-zinc-800 bg-zinc-800/50 p-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-sm font-semibold text-white">
-                      {r.symbol.replace("USDT", "")}
-                    </span>
-                    <span className={`text-xs font-medium ${signalColor(r.signal)}`}>
-                      {r.signal} {r.confidence > 0 && `${r.confidence}%`}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-zinc-500 line-clamp-2">
-                    {r.reason || r.action}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Stats Cards */}
@@ -393,7 +161,7 @@ export default function AutoTradePanel() {
 
         {journal.length === 0 ? (
           <div className="px-6 py-12 text-center text-zinc-500">
-            No trades yet. Run the agent to start trading.
+            No trades yet. The cron agent is running every minute and will trade when conditions are met.
           </div>
         ) : (
           <div className="divide-y divide-zinc-800/50">

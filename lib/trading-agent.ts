@@ -4,10 +4,20 @@ import { supabase } from "./supabase";
 import { sendTelegramMessage } from "./telegram";
 
 // --- Configuration ---
+const TRADING_COINS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
 const TOTAL_CAPITAL = 100; // $100 total capital
 const RISK_PER_TRADE = 0.01; // 1% risk per trade = $1 per trade (1R)
 const MAX_OPEN_TRADES = 3;
 const MAX_CONSECUTIVE_LOSSES = 3;
+
+// Binance API endpoints with fallbacks (Vercel geo-block workaround)
+const BINANCE_ENDPOINTS = [
+  "https://data-api.binance.vision",
+  "https://api1.binance.com",
+  "https://api2.binance.com",
+  "https://api3.binance.com",
+  "https://api.binance.com",
+];
 
 export interface TradeJournal {
   id?: string;
@@ -50,26 +60,41 @@ export interface AgentResult {
   analysis: string;
 }
 
-interface Kline {
-  open: string;
-  high: string;
-  low: string;
-  close: string;
-  volume: string;
+// --- Server-side Binance fetch with fallback endpoints ---
+async function binanceFetch(path: string): Promise<Response> {
+  let lastError: Error | null = null;
+  for (const base of BINANCE_ENDPOINTS) {
+    try {
+      const res = await fetch(`${base}${path}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) return res;
+      lastError = new Error(`${base} returned ${res.status}`);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+  throw new Error(`All Binance endpoints failed: ${lastError?.message}`);
 }
 
-// Market data provided by the client (fetched client-side to bypass Vercel geo-block)
-export interface CoinMarketData {
-  symbol: string;
-  klines1h: Kline[];
-  klines4h: Kline[];
-  klines1d: Kline[];
-  currentPrice: string;
-  high24h: string;
-  low24h: string;
-  volume24h: string;
-  quoteVolume24h: string;
-  priceChange24h: string;
+async function fetchKlines(symbol: string, interval: string, limit: number) {
+  const res = await binanceFetch(
+    `/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`
+  );
+  const data = await res.json();
+  return data.map((k: (string | number)[]) => ({
+    open: k[1] as string,
+    high: k[2] as string,
+    low: k[3] as string,
+    close: k[4] as string,
+    volume: k[5] as string,
+  }));
+}
+
+async function fetchTicker(symbol: string) {
+  const res = await binanceFetch(`/api/v3/ticker/24hr?symbol=${symbol}`);
+  return res.json();
 }
 
 // --- Parse AI signal from analysis text ---
@@ -92,7 +117,6 @@ function parseSignal(analysis: string): {
     reasoning: "",
   };
 
-  // Parse signal: BUY / SELL / HOLD / WAIT FOR TEST
   const signalMatch = analysis.match(
     /SIGNAL:\s*\*?\*?\[?\s*(BUY|SELL|HOLD|WAIT\s*(?:FOR\s*)?(?:TEST|RETEST)?)\s*\]?\*?\*?/i
   );
@@ -100,13 +124,11 @@ function parseSignal(analysis: string): {
     result.signal = signalMatch[1].trim().toUpperCase();
   }
 
-  // Parse confidence
   const confMatch = analysis.match(/Confidence:\s*(\d+)%/i);
   if (confMatch) {
     result.confidence = parseInt(confMatch[1]);
   }
 
-  // Parse entry zone
   const entryMatch = analysis.match(
     /Entry\s*(?:Zone|Price)?[:\s]*\$?([\d,]+\.?\d*)\s*[-–]\s*\$?([\d,]+\.?\d*)/i
   );
@@ -123,7 +145,6 @@ function parseSignal(analysis: string): {
     }
   }
 
-  // Parse SL
   const slMatch = analysis.match(
     /Stop\s*Loss\s*(?:\(1R\))?[:\s]*\$?([\d,]+\.?\d*)/i
   );
@@ -131,7 +152,6 @@ function parseSignal(analysis: string): {
     result.sl = parseFloat(slMatch[1].replace(/,/g, ""));
   }
 
-  // Parse TP1 (2R)
   const tp1Match = analysis.match(
     /Take\s*Profit\s*1?\s*(?:\(2R\))?[:\s]*\$?([\d,]+\.?\d*)/i
   );
@@ -139,7 +159,6 @@ function parseSignal(analysis: string): {
     result.tp1 = parseFloat(tp1Match[1].replace(/,/g, ""));
   }
 
-  // Parse TP2 (3R)
   const tp2Match = analysis.match(
     /Take\s*Profit\s*2\s*(?:\(3R\))?[:\s]*\$?([\d,]+\.?\d*)/i
   );
@@ -147,7 +166,6 @@ function parseSignal(analysis: string): {
     result.tp2 = parseFloat(tp2Match[1].replace(/,/g, ""));
   }
 
-  // Extract journal note as reasoning
   const journalMatch = analysis.match(
     /Trade\s*Journal\s*Note[:\s]*([\s\S]*?)(?=###|$)/i
   );
@@ -199,21 +217,15 @@ async function checkRiskManagement(): Promise<{
   if (consecutiveLosses >= MAX_CONSECUTIVE_LOSSES) {
     return {
       canTrade: false,
-      reason: `${MAX_CONSECUTIVE_LOSSES} consecutive losses - STOP TRADING. Review and reset.`,
+      reason: `${MAX_CONSECUTIVE_LOSSES} consecutive losses - STOP TRADING`,
       openTrades: openCount,
       consecutiveLosses,
     };
   }
 
-  return {
-    canTrade: true,
-    reason: "OK",
-    openTrades: openCount,
-    consecutiveLosses,
-  };
+  return { canTrade: true, reason: "OK", openTrades: openCount, consecutiveLosses };
 }
 
-// --- Check if already in a trade for this symbol ---
 async function hasActiveTrade(symbol: string): Promise<boolean> {
   const { data } = await supabase
     .from("trading_journal")
@@ -225,22 +237,20 @@ async function hasActiveTrade(symbol: string): Promise<boolean> {
   return (data?.length || 0) > 0;
 }
 
-// --- Calculate position size based on risk ---
 function calculatePositionSize(
   entryPrice: number,
   stopLoss: number,
   capital: number
 ): { quantity: number; riskAmount: number } {
-  const riskAmount = capital * RISK_PER_TRADE; // 1% of $100 = $1
+  const riskAmount = capital * RISK_PER_TRADE;
   const slDistance = Math.abs(entryPrice - stopLoss);
   if (slDistance === 0) return { quantity: 0, riskAmount };
   const quantity = riskAmount / slDistance;
   return { quantity, riskAmount };
 }
 
-// --- Process a single coin (market data provided by client) ---
-async function processCoin(marketData: CoinMarketData): Promise<AgentResult> {
-  const { symbol } = marketData;
+// --- Process a single coin (fetches data server-side) ---
+async function processCoin(symbol: string): Promise<AgentResult> {
   const result: AgentResult = {
     symbol,
     signal: "HOLD",
@@ -251,35 +261,43 @@ async function processCoin(marketData: CoinMarketData): Promise<AgentResult> {
   };
 
   try {
-    // 1. Check if already in a trade for this symbol
     if (await hasActiveTrade(symbol)) {
       result.action = "SKIP";
       result.reason = `Already have an active trade for ${symbol}`;
       return result;
     }
 
-    // 2. Run Gemini AI analysis (market data already provided by client)
+    // Fetch all market data server-side with fallback endpoints
+    const [klines1h, klines4h, klines1d, ticker] = await Promise.all([
+      fetchKlines(symbol, "1h", 100),
+      fetchKlines(symbol, "4h", 200),
+      fetchKlines(symbol, "1d", 250),
+      fetchTicker(symbol),
+    ]);
+
+    const currentPrice = ticker.lastPrice || ticker.price || "0";
+
+    // Run Gemini AI analysis
     const analysis = await analyzeCoin({
       symbol,
-      klines1h: marketData.klines1h,
-      klines4h: marketData.klines4h,
-      klines1d: marketData.klines1d,
-      currentPrice: marketData.currentPrice,
-      high24h: marketData.high24h,
-      low24h: marketData.low24h,
-      volume24h: marketData.volume24h,
-      quoteVolume24h: marketData.quoteVolume24h,
-      priceChange24h: marketData.priceChange24h,
+      klines1h,
+      klines4h,
+      klines1d,
+      currentPrice,
+      high24h: ticker.highPrice || ticker.high || "0",
+      low24h: ticker.lowPrice || ticker.low || "0",
+      volume24h: ticker.volume || "0",
+      quoteVolume24h: ticker.quoteVolume || "0",
+      priceChange24h: ticker.priceChangePercent || "0",
     });
 
     result.analysis = analysis;
 
-    // 3. Parse the AI signal
     const parsed = parseSignal(analysis);
     result.signal = parsed.signal;
     result.confidence = parsed.confidence;
 
-    // 4. Decision logic - only trade on BUY/SELL with high confidence
+    // Only trade on BUY/SELL with high confidence
     if (
       (parsed.signal !== "BUY" && parsed.signal !== "SELL") ||
       parsed.confidence < 60
@@ -289,40 +307,32 @@ async function processCoin(marketData: CoinMarketData): Promise<AgentResult> {
       return result;
     }
 
-    // 5. Validate trade setup values
     if (!parsed.entry || !parsed.sl || !parsed.tp1) {
       result.action = "NO_TRADE";
       result.reason = `Incomplete trade setup - Entry: $${parsed.entry}, SL: $${parsed.sl}, TP1: $${parsed.tp1}`;
       return result;
     }
 
-    // Use current price as entry if parsed entry is too far
-    const price = parseFloat(marketData.currentPrice);
+    const price = parseFloat(currentPrice);
     const entryPrice =
-      Math.abs(parsed.entry - price) / price > 0.05
-        ? price
-        : parsed.entry;
+      Math.abs(parsed.entry - price) / price > 0.05 ? price : parsed.entry;
 
-    // Calculate risk management
     const slDistance = Math.abs(entryPrice - parsed.sl);
     const tp1Distance = Math.abs(parsed.tp1 - entryPrice);
     const rr = tp1Distance / slDistance;
 
-    // Enforce minimum 2R reward
     if (rr < 1.5) {
       result.action = "NO_TRADE";
       result.reason = `Risk:Reward too low (1:${rr.toFixed(1)}). Minimum 1:2 required.`;
       return result;
     }
 
-    // Calculate TP2 at 3R if not parsed
     const tp2 =
       parsed.tp2 ||
       (parsed.signal === "BUY"
         ? entryPrice + slDistance * 3
         : entryPrice - slDistance * 3);
 
-    // 6. Calculate position size
     const { quantity, riskAmount } = calculatePositionSize(
       entryPrice,
       parsed.sl,
@@ -335,8 +345,8 @@ async function processCoin(marketData: CoinMarketData): Promise<AgentResult> {
       return result;
     }
 
-    // 7. Write to Trading Journal FIRST (before placing order)
-    const journalEntry: Omit<TradeJournal, "id" | "created_at" | "updated_at"> = {
+    // Write to Trading Journal FIRST
+    const journalEntry = {
       symbol,
       side: parsed.signal as "BUY" | "SELL",
       signal: parsed.signal,
@@ -352,7 +362,9 @@ async function processCoin(marketData: CoinMarketData): Promise<AgentResult> {
       ).toFixed(1)}`,
       status: "PENDING",
       analysis_summary: `${parsed.signal} ${symbol} @ $${entryPrice.toFixed(2)} | SL: $${parsed.sl.toFixed(2)} | TP1: $${parsed.tp1.toFixed(2)} (2R) | TP2: $${tp2.toFixed(2)} (3R)`,
-      ai_reasoning: parsed.reasoning || `AI ${parsed.signal} signal with ${parsed.confidence}% confidence`,
+      ai_reasoning:
+        parsed.reasoning ||
+        `AI ${parsed.signal} signal with ${parsed.confidence}% confidence`,
       timeframe: "1d",
       capital: TOTAL_CAPITAL,
     };
@@ -369,16 +381,15 @@ async function processCoin(marketData: CoinMarketData): Promise<AgentResult> {
       return result;
     }
 
-    // 8. Place market order on Binance testnet
+    // Place market order on Binance testnet
     try {
       const tradeAmount = quantity * entryPrice;
       const orderResult = await placeMarketOrder(
         symbol,
         parsed.signal as "BUY" | "SELL",
-        Math.max(tradeAmount, 10) // Binance minimum notional
+        Math.max(tradeAmount, 10)
       );
 
-      // Calculate fill price from fills
       let fillPrice = entryPrice;
       if (orderResult.fills && orderResult.fills.length > 0) {
         const totalQty = orderResult.fills.reduce(
@@ -392,7 +403,6 @@ async function processCoin(marketData: CoinMarketData): Promise<AgentResult> {
         fillPrice = totalCost / totalQty;
       }
 
-      // Update journal with order details
       await supabase
         .from("trading_journal")
         .update({
@@ -413,7 +423,6 @@ async function processCoin(marketData: CoinMarketData): Promise<AgentResult> {
       };
       result.reason = `${parsed.signal} order placed: ${orderResult.executedQty} ${symbol} @ $${fillPrice.toFixed(2)}`;
     } catch (orderError) {
-      // Update journal with error
       await supabase
         .from("trading_journal")
         .update({
@@ -436,10 +445,8 @@ async function processCoin(marketData: CoinMarketData): Promise<AgentResult> {
   }
 }
 
-// --- Monitor open trades using client-provided prices ---
-async function monitorOpenTrades(
-  livePrices: Record<string, string>
-): Promise<string[]> {
+// --- Monitor open trades for SL/TP hits ---
+async function monitorOpenTrades(): Promise<string[]> {
   const notifications: string[] = [];
 
   const { data: openTrades } = await supabase
@@ -452,9 +459,8 @@ async function monitorOpenTrades(
 
   for (const trade of openTrades) {
     try {
-      const priceStr = livePrices[trade.symbol];
-      if (!priceStr) continue;
-      const currentPrice = parseFloat(priceStr);
+      const ticker = await fetchTicker(trade.symbol);
+      const currentPrice = parseFloat(ticker.lastPrice || ticker.price || "0");
       if (currentPrice === 0) continue;
 
       const isBuy = trade.side === "BUY";
@@ -463,17 +469,12 @@ async function monitorOpenTrades(
         : (trade.fill_price - currentPrice) * trade.quantity;
       const pnlPercent = (pnl / (trade.fill_price * trade.quantity)) * 100;
 
-      // Check SL hit
       const slHit = isBuy
         ? currentPrice <= trade.stop_loss
         : currentPrice >= trade.stop_loss;
-
-      // Check TP1 hit
       const tp1Hit = isBuy
         ? currentPrice >= trade.take_profit_1
         : currentPrice <= trade.take_profit_1;
-
-      // Check TP2 hit
       const tp2Hit = isBuy
         ? currentPrice >= trade.take_profit_2
         : currentPrice <= trade.take_profit_2;
@@ -489,9 +490,9 @@ async function monitorOpenTrades(
             closed_at: new Date().toISOString(),
           })
           .eq("id", trade.id);
-
-        const msg = `SL HIT: ${trade.symbol}\nEntry: $${trade.fill_price}\nSL: $${trade.stop_loss}\nClose: $${currentPrice}\nP&L: $${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`;
-        notifications.push(msg);
+        notifications.push(
+          `SL HIT: ${trade.symbol} | Entry: $${trade.fill_price} | Close: $${currentPrice} | P&L: $${pnl.toFixed(2)}`
+        );
       } else if (tp2Hit) {
         await supabase
           .from("trading_journal")
@@ -503,17 +504,17 @@ async function monitorOpenTrades(
             closed_at: new Date().toISOString(),
           })
           .eq("id", trade.id);
-
-        const msg = `TP2 HIT (3R): ${trade.symbol}\nEntry: $${trade.fill_price}\nTP2: $${trade.take_profit_2}\nClose: $${currentPrice}\nP&L: $${pnl.toFixed(2)} (${pnlPercent.toFixed(2)}%)`;
-        notifications.push(msg);
+        notifications.push(
+          `TP2 HIT (3R): ${trade.symbol} | Entry: $${trade.fill_price} | Close: $${currentPrice} | P&L: $${pnl.toFixed(2)}`
+        );
       } else if (tp1Hit && trade.status !== "TP1_HIT") {
         await supabase
           .from("trading_journal")
           .update({ status: "TP1_HIT" })
           .eq("id", trade.id);
-
-        const msg = `TP1 HIT (2R): ${trade.symbol}\nEntry: $${trade.fill_price}\nTP1: $${trade.take_profit_1}\nCurrent: $${currentPrice}\nP&L: $${pnl.toFixed(2)} — Trailing to TP2`;
-        notifications.push(msg);
+        notifications.push(
+          `TP1 HIT (2R): ${trade.symbol} | Entry: $${trade.fill_price} | Current: $${currentPrice} | Trailing to TP2`
+        );
       }
     } catch (error) {
       notifications.push(
@@ -525,11 +526,8 @@ async function monitorOpenTrades(
   return notifications;
 }
 
-// --- Main Agent Entry Point (market data provided by client) ---
-export async function runTradingAgent(
-  coinsData: CoinMarketData[],
-  livePrices: Record<string, string>
-): Promise<{
+// --- Main Agent Entry Point (fully server-side, called by cron) ---
+export async function runTradingAgent(): Promise<{
   results: AgentResult[];
   monitoring: string[];
   riskCheck: {
@@ -542,8 +540,8 @@ export async function runTradingAgent(
 }> {
   const timestamp = new Date().toISOString();
 
-  // 1. Monitor existing open trades using client-provided prices
-  const monitoring = await monitorOpenTrades(livePrices);
+  // 1. Monitor existing open trades
+  const monitoring = await monitorOpenTrades();
 
   // 2. Check risk management
   const riskCheck = await checkRiskManagement();
@@ -551,10 +549,10 @@ export async function runTradingAgent(
   // 3. Process each coin
   const results: AgentResult[] = [];
 
-  for (const coinData of coinsData) {
+  for (const symbol of TRADING_COINS) {
     if (!riskCheck.canTrade) {
       results.push({
-        symbol: coinData.symbol,
+        symbol,
         signal: "BLOCKED",
         confidence: 0,
         action: "RISK_BLOCKED",
@@ -564,16 +562,19 @@ export async function runTradingAgent(
       continue;
     }
 
-    const result = await processCoin(coinData);
+    const result = await processCoin(symbol);
     results.push(result);
+
+    // Delay between coins to avoid rate limiting
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
-  // 4. Send Telegram notifications
-  const notifications: string[] = [...monitoring];
+  // 4. Send Telegram summary
+  const messages: string[] = [...monitoring];
 
   for (const r of results) {
     if (r.action === "TRADE_PLACED" && r.trade) {
-      notifications.push(
+      messages.push(
         `NEW TRADE\n` +
           `${r.trade.side} ${r.symbol}\n` +
           `Entry: $${r.trade.fill_price?.toFixed(2) || r.trade.entry_price.toFixed(2)}\n` +
@@ -583,16 +584,18 @@ export async function runTradingAgent(
           `Risk: $${r.trade.risk_amount.toFixed(2)} | RR: ${r.trade.risk_reward_ratio}\n` +
           `Confidence: ${r.confidence}%`
       );
+    } else if (r.action !== "SKIP") {
+      messages.push(`${r.symbol}: ${r.signal} - ${r.reason}`);
     }
   }
 
-  if (notifications.length > 0) {
+  if (messages.length > 0) {
     try {
       await sendTelegramMessage(
-        `Auto Trading Agent\n${timestamp}\n\n${notifications.join("\n\n")}`
+        `Auto Trading Agent\n${timestamp}\n\n${messages.join("\n\n")}`
       );
     } catch {
-      // Telegram notification is non-critical
+      // Telegram is non-critical
     }
   }
 
@@ -652,8 +655,6 @@ export async function getTradeStats() {
         ? closed.reduce((s, t) => s + (t.pnl_percent || 0), 0) / closed.length
         : 0,
     winRate:
-      closed.length > 0
-        ? (winning.length / closed.length) * 100
-        : 0,
+      closed.length > 0 ? (winning.length / closed.length) * 100 : 0,
   };
 }
