@@ -17,6 +17,12 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-3">
             <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:border-zinc-600 hover:text-white"
+            >
+              Dashboard
+            </Link>
+            <Link
               href="/auto-trade"
               className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-yellow-500/20 to-orange-500/20 px-3 py-1.5 text-xs font-semibold text-yellow-400 transition-all hover:from-yellow-500/30 hover:to-orange-500/30"
             >

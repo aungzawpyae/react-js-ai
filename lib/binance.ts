@@ -276,3 +276,74 @@ export async function cancelOrder(
 ): Promise<OrderResult> {
   return authenticatedRequest("/api/v3/order", "DELETE", { symbol, orderId });
 }
+
+// --- Futures Account (Binance Futures Testnet) ---
+
+const FUTURES_BASE_URL =
+  process.env.BINANCE_FUTURES_BASE_URL || "https://testnet.binancefuture.com";
+
+function signFuturesQuery(queryString: string): string {
+  const signature = crypto
+    .createHmac("sha256", API_SECRET)
+    .update(queryString)
+    .digest("hex");
+  return `${queryString}&signature=${signature}`;
+}
+
+async function futuresAuthenticatedRequest(
+  endpoint: string,
+  method: "GET" | "POST" | "DELETE" = "GET",
+  params: Record<string, string | number> = {}
+) {
+  const timestamp = Date.now();
+  const allParams = { ...params, timestamp };
+  const queryString = Object.entries(allParams)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("&");
+  const signedQuery = signFuturesQuery(queryString);
+
+  const url = `${FUTURES_BASE_URL}${endpoint}?${signedQuery}`;
+
+  const res = await fetch(url, {
+    method,
+    headers: { "X-MBX-APIKEY": API_KEY },
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Binance Futures API error: ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+export interface FuturesBalance {
+  asset: string;
+  walletBalance: string;
+  unrealizedProfit: string;
+  marginBalance: string;
+  availableBalance: string;
+}
+
+export interface FuturesPosition {
+  symbol: string;
+  positionAmt: string;
+  entryPrice: string;
+  unrealizedProfit: string;
+  leverage: string;
+  positionSide: string;
+}
+
+export async function getFuturesBalances(): Promise<FuturesBalance[]> {
+  const account = await futuresAuthenticatedRequest("/fapi/v2/account");
+  return (account.assets || []).filter(
+    (b: FuturesBalance) =>
+      parseFloat(b.walletBalance) > 0 || parseFloat(b.unrealizedProfit) !== 0
+  );
+}
+
+export async function getFuturesPositions(): Promise<FuturesPosition[]> {
+  const account = await futuresAuthenticatedRequest("/fapi/v2/account");
+  return (account.positions || []).filter(
+    (p: FuturesPosition) => parseFloat(p.positionAmt) !== 0
+  );
+}

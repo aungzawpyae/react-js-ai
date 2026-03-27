@@ -5,6 +5,7 @@ import { formatPrice, formatPercent, formatVolume, getCoinName } from "@/lib/for
 import LivePrice from "./LivePrice";
 import PriceChart from "./PriceChart";
 import AnalysisPanel from "./AnalysisPanel";
+import TradePanel from "./TradePanel";
 
 interface TickerData {
   lastPrice: string;
@@ -88,6 +89,9 @@ export default function CoinDetail({ symbol }: { symbol: string }) {
           <PriceChart symbol={symbol} />
         </div>
       </div>
+
+      {/* Trade Panel */}
+      <TradePanel symbol={symbol} />
 
       {/* AI Analysis */}
       <AnalysisPanel symbol={symbol} />
